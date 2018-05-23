@@ -253,7 +253,8 @@ static void check_obj_resize(struct osd_state *osd, struct mp_osd_res res,
 void osd_resize(struct osd_state *osd, struct mp_osd_res res)
 {
     pthread_mutex_lock(&osd->lock);
-    int types[] = {OSDTYPE_OSD, OSDTYPE_EXTERNAL, OSDTYPE_EXTERNAL2, -1};
+    int types[] = {OSDTYPE_OSD, OSDTYPE_EXTERNAL,
+                   OSDTYPE_EXTERNAL2, OSDTYPE_EXTENTS, -1};
     for (int n = 0; types[n] >= 0; n++)
         check_obj_resize(osd, res, osd->objs[types[n]]);
     pthread_mutex_unlock(&osd->lock);
@@ -309,6 +310,11 @@ void osd_draw(struct osd_state *osd, struct mp_osd_res res,
 
     for (int n = 0; n < MAX_OSD_PARTS; n++) {
         struct osd_object *obj = osd->objs[n];
+
+        if (n == OSDTYPE_EXTENTS) {
+            // Do not render sub-bitmaps meant for measuring extents
+            continue;
+        }
 
         // Object is drawn into the video frame itself; don't draw twice
         if (osd->render_subs_in_filter && obj->is_sub &&

@@ -584,3 +584,213 @@ void osd_object_get_bitmaps(struct osd_state *osd, struct osd_object *obj,
 
     obj->changed = false;
 }
+
+
+/* Finds a bounding box for a sub_bitmap by efficiently scanning the pixels
+   from different sides. Assumes format is SUBBITMAP_LIBASS (A8). */
+static void get_sub_bitmap_bounds(struct osd_state *osd, struct sub_bitmap *part,
+                                unsigned char alpha_treshold,
+                                struct mp_extents *extents,
+                                bool *extents_set)
+{
+    if (*extents_set && (part->x >= extents->x1 &&
+                        part->x + part->w <= extents->x2 &&
+                        part->y >= extents->y1 &&
+                        part->y + part->h <= extents->y2))
+    {
+        // Bail if the sub_bitmap is already contained within the current extents
+        // MP_ERR(osd, "Bail\n");
+        return;
+    }
+
+    int pw = part->w;
+    int ph = part->h;
+
+    int min_y = ph;
+    int min_x = pw;
+    int max_x = 0;
+    int max_y = 0;
+
+    bool is_blank = true;
+
+    unsigned char* bitmap_data = (unsigned char*) part->bitmap;
+
+    // Top to bottom +Y +X
+    for (int y = 0; y < min_y; y++) {
+        for (int x = 0; x < min_x; x++) {
+            if (bitmap_data[part->stride * y + x] > alpha_treshold) {
+                min_y = y;
+                // Preliminary values to save loops later on
+                max_y = y;
+                min_x = x;
+                max_x = x;
+
+                is_blank = false;
+            }
+        }
+    }
+
+    if (is_blank) {
+        // Bail early if we have an empty sub_bitmap
+        return;
+    }
+
+    // Right to left -X -Y
+    for (int x = pw-1; x > max_x; x--) {
+        for (int y = ph-1; y > max_y; y--) {
+            if (bitmap_data[part->stride * y + x] > alpha_treshold) {
+                max_x = x;
+                // Preliminary
+                max_y = y;
+                break;
+            }
+        }
+    }
+
+    // Bottom to top -Y -X
+    for (int y = ph-1; y > max_y; y--) {
+        for (int x = max_x; x > 0; x--) {
+            if (bitmap_data[part->stride * y + x] > alpha_treshold) {
+                max_y = y;
+                // Preliminary
+                min_x = x;
+                break;
+            }
+        }
+    }
+
+    // Left to right +X +Y
+    for (int x = 0; x < min_x; x++) {
+        for (int y = min_y; y < max_y; y++) {
+            if (bitmap_data[part->stride * y + x] > alpha_treshold) {
+                min_x = x;
+                break;
+            }
+        }
+    }
+
+    if (*extents_set) {
+        // MP_INFO(osd, "  Is set\n");
+        // Extend the existing extents
+        extents->x1 = MPMIN(extents->x1, min_x + part->x);
+        extents->x2 = MPMAX(extents->x2, max_x + part->x);
+        extents->y1 = MPMIN(extents->y1, min_y + part->y);
+        extents->y2 = MPMAX(extents->y2, max_y + part->y);
+    } else {
+        // MP_INFO(osd, "  Not set\n");
+        // Set the fresh extents
+        extents->x1 = min_x + part->x;
+        extents->x2 = max_x + part->x;
+        extents->y1 = min_y + part->y;
+        extents->y2 = max_y + part->y;
+        *extents_set = true;
+    }
+}
+
+/* Calculates extents for given ASS subtitles as if they were displayed on the OSD.
+   Subtitles are rendered with libass and fitted with a bounding box.
+   This is relatively fast (5 to 10ms on an old laptop) but it's not advisable to
+   calculate the extents every tick. */
+bool osd_get_ass_extents(struct osd_state *osd, void *id, int res_x, int res_y,
+                         char *text, unsigned char alpha_treshold, struct mp_extents *out_extents)
+{
+    struct mp_osd_res vo_res = osd_get_vo_res(osd);
+    pthread_mutex_lock(&osd->lock);
+    id = 1;
+    // MP_ERR(osd, "Got lock %p %p, id: %p\n", osd, out_extents, id);
+
+    // struct mp_extents *ass_extents;
+    bool extents_set = false;
+
+    struct osd_object *obj = osd->objs[OSDTYPE_EXTENTS];
+    struct osd_external *entry = 0;
+    for (int n = 0; n < obj->num_externals; n++) {
+        if (obj->externals[n].id == id) {
+            entry = &obj->externals[n];
+            break;
+        }
+    }
+
+    if (!entry && !text) {
+        goto done;
+    }
+
+    if (!entry) {
+        // Create new entry
+        struct osd_external new = { .id = id };
+        MP_TARRAY_APPEND(obj, obj->externals, obj->num_externals, new);
+        entry = &obj->externals[obj->num_externals - 1];
+    }
+
+    if (!text) {
+        // Remove entry
+        int index = entry - &obj->externals[0];
+        destroy_external(entry);
+        MP_TARRAY_REMOVE_AT(obj->externals, obj->num_externals, index);
+        goto done;
+    }
+
+    // Check if text or stage resolution has changed
+    if (!entry->text || strcmp(entry->text, text) != 0 ||
+        entry->res_x != res_x || entry->res_y != res_y)
+    {
+        // MP_WARN(osd, " pre-txt %.64s\n", entry->text);
+        talloc_free(entry->text);
+        entry->text = talloc_strdup(NULL, text);
+        entry->res_x = res_x;
+        entry->res_y = res_y;
+        update_external(osd, obj, entry);
+        // obj->changed = true;
+
+        // ASS_Event *as_ev; = entry->ass.track->events;
+        // ASS_Event *as_ev;
+        // MP_WARN(osd, "Ass events:\n");
+        // for (int i = 0; i < entry->ass.track->n_events; ++i)
+        // {
+        //     as_ev = entry->ass.track->events + i;
+        //     MP_WARN(osd, " %02d Text: %.64s\n", i, as_ev->Text);
+        // }
+
+        void *old_ptr = obj->extents;
+        talloc_free(obj->extents);
+        // obj->extents = talloc_zero(NULL, struct mp_extents);
+        // We don't need to zero because of extents_set
+        obj->extents = talloc(NULL, struct mp_extents);
+        // MP_WARN(osd, "Free and alloc %p -> %p\n", old_ptr, obj->extents);
+        // MP_WARN(osd, " txt %.64s\n", entry->text);
+        // MP_WARN(osd, " pre-extents %d,%d, %d,%d\n", obj->extents->x1, obj->extents->y1, obj->extents->x2, obj->extents->y2);
+
+        if (!osd_res_equals(vo_res, obj->vo_res)) {
+            obj->vo_res = vo_res;
+        }
+        struct sub_bitmaps imgs = {0};
+        osd_object_get_bitmaps(osd, obj, SUBBITMAP_LIBASS, &imgs);
+
+        // Check bounds for all sub-images
+        for (int img_i = 0; img_i < imgs.num_parts; img_i++) {
+            get_sub_bitmap_bounds(osd, &imgs.parts[img_i], alpha_treshold, obj->extents, &extents_set);
+            // MP_WARN(osd, "  extents %d,%d, %d,%d\n", obj->extents->x1, obj->extents->y1, obj->extents->x2, obj->extents->y2);
+        }
+        // MP_WARN(osd, " extents_set %d parts %d\n", obj->extents_set, imgs.num_parts);
+        // MP_WARN(osd, " extents %d,%d, %d,%d\n", obj->extents->x1, obj->extents->y1, obj->extents->x2, obj->extents->y2);
+
+        // Store extents
+        // obj->extents = ass_extents;
+        obj->extents_set = extents_set;
+    } else {
+        // If ASS is cached, grab the done-state
+        extents_set = obj->extents_set;
+        // MP_WARN(osd, " cached set %d\n", obj->extents_set);
+    }
+
+    // Set output extents
+    if (extents_set) {
+        memcpy(out_extents, obj->extents, sizeof(struct mp_extents));
+    }
+    // *out_extents = obj->extents;
+
+done:
+    // MP_ERR(osd, "Leaving lock %p %p\n", osd, out_extents);
+    pthread_mutex_unlock(&osd->lock);
+    return extents_set;
+}

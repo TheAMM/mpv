@@ -748,6 +748,46 @@ static void script_get_osd_size(js_State *J)
     push_nums_obj(J, names, vals);
 }
 
+// args: res_x, res_y, text, [alpha treshold]
+// return: object with properties x1, y1, x2, y2, width, height or undefined
+static void script_get_osd_ass_extents(js_State *J)
+{
+    struct script_ctx *ctx = jctx(J);
+
+    int res_x = js_tonumber(J, 1);
+    int res_y = js_tonumber(J, 2);
+    const char *text = js_tostring(J, 3);
+
+    unsigned char alpha_treshold = 0;
+    if (js_isnumber(J, 4)) {
+        alpha_treshold = (unsigned char) (js_tonumber(J, 4));
+    }
+
+    struct mp_extents extents;
+    // struct osd_state *osd = ctx->mpctx->osd;
+    // MP_INFO(ctx, "JS CALL %p\n", text);
+    bool extents_set = osd_get_ass_extents(ctx->mpctx->osd, ctx->client,
+                                           res_x, res_y, (char *)text,
+                                           alpha_treshold, &extents);
+    if (extents_set) {
+        const char * field_names[] = {
+            "x1", "y1",
+            "x2", "y2",
+            "width", "height", NULL
+        };
+        const double field_values[] = {
+            extents.x1, extents.y1,
+            extents.x2, extents.y2,
+            extents.x2 - extents.x1,
+            extents.y2 - extents.y1
+        };
+        push_nums_obj(J, field_names, field_values);
+        set_last_error(ctx, false, NULL); // Clear error
+    } else {
+        push_failure(J, "Empty extents");
+    }
+}
+
 // args: none, return: object with properties top, bottom, left, right
 static void script_get_osd_margins(js_State *J)
 {
@@ -1329,6 +1369,7 @@ static const struct fn_entry main_fns[] = {
     FN_ENTRY(_hook_continue, 1),
     FN_ENTRY(set_osd_ass, 3),
     FN_ENTRY(get_osd_size, 0),
+    FN_ENTRY(get_osd_ass_extents, 4),
     FN_ENTRY(get_osd_margins, 0),
     FN_ENTRY(get_mouse_pos, 0),
     FN_ENTRY(input_set_section_mouse_area, 5),

@@ -82,10 +82,15 @@ struct mp_osd_res {
     double display_par;
 };
 
+struct mp_extents {
+    int x1, y1;
+    int x2, y2;
+};
+
 bool osd_res_equals(struct mp_osd_res a, struct mp_osd_res b);
 
 // 0 <= sub_bitmaps.render_index < MAX_OSD_PARTS
-#define MAX_OSD_PARTS 5
+#define MAX_OSD_PARTS 6
 
 // Start of OSD symbols in osd_font.pfb
 #define OSD_CODEPOINTS 0xE000
@@ -206,5 +211,9 @@ void osd_set_external(struct osd_state *osd, void *id, int res_x, int res_y,
                       char *text);
 void osd_get_text_size(struct osd_state *osd, int *out_screen_h, int *out_font_h);
 void osd_get_function_sym(char *buffer, size_t buffer_size, int osd_function);
+
+bool osd_get_ass_extents(struct osd_state *osd, void *id, int res_x, int res_y,
+                         char *text, unsigned char alpha_treshold,
+                         struct mp_extents *out_extents);
 
 #endif /* MPLAYER_SUB_H */

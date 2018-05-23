@@ -992,6 +992,46 @@ static int script_get_osd_size(lua_State *L)
     return 3;
 }
 
+static int script_get_osd_ass_extents(lua_State *L)
+{
+    struct script_ctx *ctx = get_ctx(L);
+    int res_x = luaL_checkinteger(L, 1);
+    int res_y = luaL_checkinteger(L, 2);
+    const char *text = luaL_checkstring(L, 3);
+    unsigned char alpha_treshold = (unsigned char) (luaL_optinteger(L, 4, 0) & 0xFF);
+
+    struct mp_extents extents;
+    // struct osd_state *osd = ctx->mpctx->osd;
+    // MP_ERR(ctx, "LUACALL %p\n", text);
+    bool extents_set = osd_get_ass_extents(ctx->mpctx->osd, ctx->client,
+                                           res_x, res_y, (char *)text,
+                                           alpha_treshold, &extents);
+    if (extents_set) {
+        const char * field_names[] = {
+            "x1", "y1",
+            "x2", "y2",
+            "width", "height", NULL
+        };
+        const int field_values[] = {
+            extents.x1, extents.y1,
+            extents.x2, extents.y2,
+            extents.x2 - extents.x1,
+            extents.y2 - extents.y1
+        };
+        lua_newtable(L);
+
+        // Add all fields
+        for (int i = 0; field_names[i]; i++) {
+            lua_pushinteger(L, field_values[i]);
+            lua_setfield(L, -2, field_names[i]);
+        }
+
+        return 1; // Extents table
+    } else {
+        return 0; // nil
+    }
+}
+
 static int script_get_osd_margins(lua_State *L)
 {
     struct MPContext *mpctx = get_mpctx(L);
@@ -1350,6 +1390,7 @@ static const struct fn_entry main_fns[] = {
     FN_ENTRY(raw_unobserve_property),
     FN_ENTRY(set_osd_ass),
     FN_ENTRY(get_osd_size),
+    FN_ENTRY(get_osd_ass_extents),
     FN_ENTRY(get_osd_margins),
     FN_ENTRY(get_mouse_pos),
     FN_ENTRY(get_time),

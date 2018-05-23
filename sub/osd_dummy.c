@@ -34,3 +34,10 @@ void osd_get_text_size(struct osd_state *osd, int *out_screen_h, int *out_font_h
     *out_screen_h = 0;
     *out_font_h = 0;
 }
+
+bool osd_get_ass_extents(struct osd_state *osd, void *id, int res_x, int res_y,
+                         char *text, unsigned char alpha_treshold,
+                         struct mp_extents *out_extents)
+{
+    return false;
+}

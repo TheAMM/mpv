@@ -14,6 +14,8 @@ enum mp_osdtype {
     OSDTYPE_EXTERNAL,
     OSDTYPE_EXTERNAL2,
 
+    OSDTYPE_EXTENTS,
+
     OSDTYPE_COUNT
 };
 
@@ -43,6 +45,10 @@ struct osd_object {
 
     // OSDTYPE_EXTERNAL2
     struct sub_bitmaps *external2;
+
+    // OSDTYPE_EXTENTS
+    struct mp_extents *extents;
+    bool extents_set;
 
     // VO cache state
     int vo_change_id;
